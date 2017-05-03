@@ -54,7 +54,7 @@ int main(int argc, char* argv[])
                               99999, 99999, 99999, 99999,
                               99999};
   
-  size_t outer_tuples[] = {10000000, 1000000000, 1000000000, 1000000000,
+  size_t outer_tuples[] = {1000000000, 1000000000, 1000000000, 1000000000,
                            1000000000, 1000000000, 1000000000, 1000000000,
                            1000000000, 1000000000, 1000000000, 1000000000,
                            1000000000, 1000000000, 1000000000, 1000000000,
@@ -95,8 +95,8 @@ int main(int argc, char* argv[])
                 "threads", "repeat", "nanoseconds");
 
   int s,t,repeat;
-  for (s = 0; s < 1; ++s) {
-    for (t = 2; t < 3; ++t) {
+  for (s = 20; s < 21; ++s) {
+    for (t = 4; t < 5; ++t) {
       for (repeat = 1; repeat <= 1; ++repeat) {// repeat 改成了1次
         printf("s=%d t=%d repeat=%d \n",s,t,repeat);
 
@@ -113,7 +113,7 @@ int main(int argc, char* argv[])
         
         uint32_t *outer_aggr_keys = NULL;
         if (groups[s] > 0)
-        {
+        { 
           outer_aggr_keys = (uint32_t *)malloc(outer_tuples[s] * 4);
           assert(outer_aggr_keys != NULL);
         }
@@ -132,11 +132,12 @@ int main(int argc, char* argv[])
         uint64_t run_res = q4112_run(inner_keys, inner_vals, inner_tuples[s],
                                      outer_join_keys, outer_aggr_keys, outer_vals, outer_tuples[s], threads[t]);
         gen_ns = real_time() - gen_ns;
+        printf("gen_ns %d\n", gen_ns);
 
-        printf("gen_res : %llu\n", (unsigned long long) gen_res);
-        printf("run_res : %llu\n", (unsigned long long) run_res);
-
+        // printf("gen_res : %llu\n", (unsigned long long) gen_res);
+        // printf("run_res : %llu\n", (unsigned long long) run_res);
         assert(gen_res == run_res);
+
         fprintf(fd, "%ld,%f,%d,%ld,%f,%d,%ld,%ld,%f,%d,%d,%ld\n",inner_tuples[s], inner_selectivity[s], inner_val_max[s],
                 outer_tuples[s], outer_selectivity[s], outer_val_max[s],
                 groups[s], hh_groups[s], hh_probability[s],
