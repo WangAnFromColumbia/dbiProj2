@@ -86,7 +86,7 @@ int main(int argc, char* argv[])
                              0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0,
                              0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0};
 
-  int threads[] = {1, 2, 4, 8, 16};
+  int threads[5] = {1, 2, 4, 8, 16};
 
   // print header
   fprintf(fd, "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n","inner_tuples", "inner_selectivity", "inner_val_max",

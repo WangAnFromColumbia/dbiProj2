@@ -379,6 +379,7 @@ uint64_t q4112_run(
     int threads) {
   // check number of threads
   int t, max_threads = sysconf(_SC_NPROCESSORS_ONLN);
+  printf("%d %d\n", max_threads, threads); 
   assert(max_threads > 0 && threads > 0 && threads <= max_threads);
 
   // allocate threads info
