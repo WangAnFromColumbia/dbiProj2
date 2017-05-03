@@ -167,38 +167,43 @@ void* estimate_thread(void* arg) {
   pthread_exit(NULL);
 }
 
+void flush(bucket_aggr_t* smallhash, bucket_aggr_t* aggr_table, int8_t log_aggr_buckets) {
+  int i, aggr_h;
+  uint32_t aggr_key;
+  for (i = 0; i < 512; i++) {
+    if (smallhash[i].key == 0) {
+      continue;
+    }
+    aggr_key = smallhash[i].key;
 
-size_t estimate(const uint32_t* outer_aggr_keys, size_t outer_tuples, int threads) {
-  const int8_t log_partitions = 12;
-  size_t t, partitions = 1 << log_partitions;
-  uint32_t* bitmaps = calloc(partitions, 4);
+    aggr_h = (uint32_t) (aggr_key * 0x9e3779b1);
+    aggr_h >>= 32 - log_aggr_buckets;
 
-  // allocate threads info
-  q4112_estimation_info_hj_t* info = (q4112_estimation_info_hj_t*)
-      malloc(threads * sizeof(q4112_estimation_info_hj_t));
-  assert(info != NULL);
+    int flag = 0;
+    while (flag == 0) {
+      // if already occupied
+      if (aggr_table[aggr_h].key == aggr_key) {
+        flag = 1;
+      } else { // if not occupied, try to occupy
+        if (__sync_bool_compare_and_swap(&(aggr_table[aggr_h].key), 0, aggr_key)) {
+          flag = 1;
+        } else if (aggr_table[aggr_h].key == aggr_key) { // if failed to occupy, check if occpuied by the same group
+          flag = 1;
+        }
+      }
+      if (flag == 0) {
+        aggr_h = (aggr_h + 1) & (aggr_buckets - 1);
+      }
+    }
 
-  for (t = 0; t != threads; ++t) {
-    info[t].thread = t;
-    info[t].threads = threads;
-    info[t].outer_aggr_keys = outer_aggr_keys;
-    info[t].outer_tuples = outer_tuples;
-    info[t].partitions = partitions;
-    info[t].log_partitions = log_partitions;
-    info[t].bitmaps = bitmaps;
-    pthread_create(&info[t].id, NULL, estimate_thread, &info[t]);
+    __sync_fetch_and_add(&aggr_table[aggr_h].sum, table[h].val * (uint64_t) smallhash[i].sum);
+    __sync_fetch_and_add(&aggr_table[aggr_h].count, smallhash[i].count);
+
+    smallhash[i].key = 0;
+    smallhash[i].count = 0;
+    smallhash[i].sum = 0;
   }
-
-  size_t sum = 0;
-  for (t = 0; t != threads; ++t) {
-    pthread_join(info[t].id, NULL);
-    sum += info[t].sum_local;
-  }
-  free(bitmaps);
-  return sum / 0.77351;
 }
-
-
 // build hash table and probe to get result (each thread has it own boundaries)
 void* q4112_run_thread(void* arg) {
   q4112_run_info_hj_t* info = (q4112_run_info_hj_t*) arg;
@@ -264,6 +269,10 @@ void* q4112_run_thread(void* arg) {
   if (thread + 1 == threads) outer_end = outer_tuples;
 
   size_t aggr_h;
+  int small_hash_count = 0;
+
+  bucket_aggr_t* smallhash = (bucket_aggr_t*) calloc(512, sizeof(bucket_aggr_t));
+
   // probe outer table using hash table
   for (o = outer_beg; o != outer_end; ++o) {
     uint32_t key = outer_keys[o];
@@ -275,32 +284,32 @@ void* q4112_run_thread(void* arg) {
 
     // search for matching bucket
     uint32_t tab = table[h].key;
+
     while (tab != 0) {
       // keys match
       if (tab == key) {
-        aggr_h = (uint32_t) (aggr_key * 0x9e3779b1);
-        aggr_h >>= 32 - log_aggr_buckets;
+        // hashing for small hash table
+        size_t h2;
+        h2 = (uint32_t) (aggr_key * 0x9e3779b1);
+        h2 >>= 32 - 9;
 
-        int occupation_successful = 0;
-        while (!occupation_successful) {
-          // if already occupied
-          if (aggr_table[aggr_h].key == aggr_key) {
-            occupation_successful = 1;
-          } else { // if not occupied, try to occupy
-            if (__sync_bool_compare_and_swap(&(aggr_table[aggr_h].key), 0, aggr_key)) {
-              occupation_successful = 1;
-            } else if (aggr_table[aggr_h].key == aggr_key) { // if failed to occupy, check if occpuied by the same group
-              occupation_successful = 1;
-            }
-          }
-          if (!occupation_successful) {
-            aggr_h = (aggr_h + 1) & (aggr_buckets - 1);
-          }
+        while (smallhash[h2].key != 0 && smallhash[h2].key != aggr_key) {
+          h2 = (h2 + 1) & (512 - 1);
         }
 
-        __sync_fetch_and_add(&aggr_table[aggr_h].sum, table[h].val * (uint64_t) outer_vals[o]);
-        __sync_fetch_and_add(&aggr_table[aggr_h].count, 1);
+        if (smallhash[h2].key == 0) {
+          smallhash[h2].key = key;
+          count += 1;
+        }
 
+        smallhash[h2].count += 1;
+        smallhash[h2].sum += table[h].val * (uint64_t) outer_vals[o];
+
+        if (count == 512 || o == outer_end - 1) {
+          flush(smallhash ,aggr_table, log_aggr_buckets);
+          small_hash_count = 0;
+        }
+        
         // guaranteed single match (join on primary key)
         break;
       }
@@ -309,6 +318,8 @@ void* q4112_run_thread(void* arg) {
       tab = table[h].key;
     }
   }
+
+  free(smallhash);
 
   // barrier wait for next stage: summing up
   pthread_barrier_wait(&barrier3);
