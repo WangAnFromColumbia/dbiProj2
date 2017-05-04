@@ -54,7 +54,7 @@ int main(int argc, char* argv[])
                               99999, 99999, 99999, 99999,
                               99999};
   
-  size_t outer_tuples[] = {1000000000, 1000000000, 1000000000, 1000000000,
+  size_t outer_tuples[] = {100000000, 1000000000, 1000000000, 1000000000,
                            1000000000, 1000000000, 1000000000, 1000000000,
                            1000000000, 1000000000, 1000000000, 1000000000,
                            1000000000, 1000000000, 1000000000, 1000000000,
@@ -96,36 +96,38 @@ int main(int argc, char* argv[])
 
   int s,t,repeat;
   for (s = 20; s < 21; ++s) {
+    
+
     for (t = 4; t < 5; ++t) {
       for (repeat = 1; repeat <= 1; ++repeat) {// repeat 改成了1次
         printf("s=%d t=%d repeat=%d \n",s,t,repeat);
 
+
         // allocate space for outer table
-        uint32_t *outer_join_keys = (uint32_t *)malloc(outer_tuples[s] * 4);
-        assert(outer_join_keys != NULL);
+    uint32_t *outer_join_keys = (uint32_t *)malloc(outer_tuples[s] * 4);
+    assert(outer_join_keys != NULL);
 
-        //        uint64_t gen_ns = real_time();
-        // allocate space for inner table
-        uint32_t *inner_keys = (uint32_t *)malloc(inner_tuples[s] * 4);
-        assert(inner_keys != NULL);
-        uint32_t *inner_vals = (uint32_t *)malloc(inner_tuples[s] * 4);
-        assert(inner_vals != NULL);
-        
-        uint32_t *outer_aggr_keys = NULL;
-        if (groups[s] > 0)
-        { 
-          outer_aggr_keys = (uint32_t *)malloc(outer_tuples[s] * 4);
-          assert(outer_aggr_keys != NULL);
-        }
-        uint32_t *outer_vals = (uint32_t *)malloc(outer_tuples[s] * 4);
-        assert(outer_vals != NULL);
+    //        uint64_t gen_ns = real_time();
+    // allocate space for inner table
+    uint32_t *inner_keys = (uint32_t *)malloc(inner_tuples[s] * 4);
+    assert(inner_keys != NULL);
+    uint32_t *inner_vals = (uint32_t *)malloc(inner_tuples[s] * 4);
+    assert(inner_vals != NULL);
+    
+    uint32_t *outer_aggr_keys = NULL;
+    if (groups[s] > 0)
+    { 
+      outer_aggr_keys = (uint32_t *)malloc(outer_tuples[s] * 4);
+      assert(outer_aggr_keys != NULL);
+    }
+    uint32_t *outer_vals = (uint32_t *)malloc(outer_tuples[s] * 4);
+    assert(outer_vals != NULL);
 
-        printf("start q4112_gen\n");
-        
-        uint64_t gen_res = q4112_gen(inner_keys, inner_vals, inner_tuples[s],
-                                     inner_selectivity[s], inner_val_max[s],
-                                     outer_join_keys, outer_aggr_keys, outer_vals, outer_tuples[s],
-                                     outer_selectivity[s], outer_val_max[s], groups[s], hh_groups[s], hh_probability[s]);
+    
+    uint64_t gen_res = q4112_gen(inner_keys, inner_vals, inner_tuples[s],
+                                 inner_selectivity[s], inner_val_max[s],
+                                 outer_join_keys, outer_aggr_keys, outer_vals, outer_tuples[s],
+                                 outer_selectivity[s], outer_val_max[s], groups[s], hh_groups[s], hh_probability[s]);
 
 
         uint64_t gen_ns = real_time();

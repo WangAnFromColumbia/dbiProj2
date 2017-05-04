@@ -167,47 +167,82 @@ void* estimate_thread(void* arg) {
   pthread_exit(NULL);
 }
 
-void flush(bucket_aggr_t* smallhash, bucket_aggr_t* aggr_table, int8_t log_aggr_buckets) {
-  int i, aggr_h;
-  uint32_t aggr_key;
-  for (i = 0; i < 512; i++) {
-    if (smallhash[i].key == 0) {
-      continue;
-    }
-    aggr_key = smallhash[i].key;
 
-    aggr_h = (uint32_t) (aggr_key * 0x9e3779b1);
-    aggr_h >>= 32 - log_aggr_buckets;
+size_t estimate(const uint32_t* outer_aggr_keys, size_t outer_tuples, int threads) {
+  const int8_t log_partitions = 12;
+  size_t t, partitions = 1 << log_partitions;
+  uint32_t* bitmaps = calloc(partitions, 4);
 
-    int flag = 0;
-    while (flag == 0) {
-      // if already occupied
-      if (aggr_table[aggr_h].key == aggr_key) {
-        flag = 1;
-      } else { // if not occupied, try to occupy
-        if (__sync_bool_compare_and_swap(&(aggr_table[aggr_h].key), 0, aggr_key)) {
-          flag = 1;
-        } else if (aggr_table[aggr_h].key == aggr_key) { // if failed to occupy, check if occpuied by the same group
-          flag = 1;
-        }
-      }
-      if (flag == 0) {
-        aggr_h = (aggr_h + 1) & (aggr_buckets - 1);
-      }
-    }
+  // allocate threads info
+  q4112_estimation_info_hj_t* info = (q4112_estimation_info_hj_t*)
+      malloc(threads * sizeof(q4112_estimation_info_hj_t));
+  assert(info != NULL);
 
-    __sync_fetch_and_add(&aggr_table[aggr_h].sum, table[h].val * (uint64_t) smallhash[i].sum);
-    __sync_fetch_and_add(&aggr_table[aggr_h].count, smallhash[i].count);
-
-    smallhash[i].key = 0;
-    smallhash[i].count = 0;
-    smallhash[i].sum = 0;
+  for (t = 0; t != threads; ++t) {
+    info[t].thread = t;
+    info[t].threads = threads;
+    info[t].outer_aggr_keys = outer_aggr_keys;
+    info[t].outer_tuples = outer_tuples;
+    info[t].partitions = partitions;
+    info[t].log_partitions = log_partitions;
+    info[t].bitmaps = bitmaps;
+    pthread_create(&info[t].id, NULL, estimate_thread, &info[t]);
   }
+
+  size_t sum = 0;
+  for (t = 0; t != threads; ++t) {
+    pthread_join(info[t].id, NULL);
+    sum += info[t].sum_local;
+  }
+  free(bitmaps);
+  return sum / 0.77351;
 }
+
+
+// void flush(bucket_aggr_t* smallhash, bucket_aggr_t* aggr_table, int8_t log_aggr_buckets,
+//            size_t aggr_buckets) {
+//   int i, aggr_h;
+//   uint32_t aggr_key;
+//   for (i = 0; i < 512; i++) {
+//     if (smallhash[i].key == 0) {
+//       continue;
+//     }
+//     aggr_key = smallhash[i].key;
+
+//     aggr_h = (uint32_t) (aggr_key * 0x9e3779b1);
+//     aggr_h >>= 32 - log_aggr_buckets;
+
+//     int flag = 0;
+//     while (flag == 0) {
+//       // if already occupied
+//       if (aggr_table[aggr_h].key == aggr_key) {
+//         flag = 1;
+//       } else { // if not occupied, try to occupy
+//         if (__sync_bool_compare_and_swap(&(aggr_table[aggr_h].key), 0, aggr_key)) {
+//           flag = 1;
+//         } else if (aggr_table[aggr_h].key == aggr_key) { // if failed to occupy, check if occpuied by the same group
+//           flag = 1;
+//         }
+//       }
+//       if (flag == 0) {
+//         aggr_h = (aggr_h + 1) & (aggr_buckets - 1);
+//       }
+//     }
+
+//     __sync_fetch_and_add(&aggr_table[aggr_h].sum, table[h].val * (uint64_t) smallhash[i].sum);
+//     __sync_fetch_and_add(&aggr_table[aggr_h].count, smallhash[i].count);
+
+//     smallhash[i].key = 0;
+//     smallhash[i].count = 0;
+//     smallhash[i].sum = 0;
+//   }
+// }
 // build hash table and probe to get result (each thread has it own boundaries)
 void* q4112_run_thread(void* arg) {
   q4112_run_info_hj_t* info = (q4112_run_info_hj_t*) arg;
   assert(pthread_equal(pthread_self(), info->id));
+
+  // fprintf(stderr, "%d 000 \n", info->thread);
 
   // copy info from thread info
   size_t thread  = info->thread;
@@ -226,6 +261,7 @@ void* q4112_run_thread(void* arg) {
   const uint32_t* outer_aggr_keys = info->outer_aggr_keys;
   bucket_t* table = info->table;
   bucket_aggr_t* aggr_table = info->aggr_table;
+
 
   // set thread boundaries for inner table
   size_t inner_beg = (inner_tuples / threads) * (thread + 0);
@@ -268,11 +304,9 @@ void* q4112_run_thread(void* arg) {
   // fix boundary for last thread
   if (thread + 1 == threads) outer_end = outer_tuples;
 
-  size_t aggr_h;
   int small_hash_count = 0;
-
   bucket_aggr_t* smallhash = (bucket_aggr_t*) calloc(512, sizeof(bucket_aggr_t));
-
+  // fprintf(stderr, "%d 333 \n", info->thread);
   // probe outer table using hash table
   for (o = outer_beg; o != outer_end; ++o) {
     uint32_t key = outer_keys[o];
@@ -298,15 +332,72 @@ void* q4112_run_thread(void* arg) {
         }
 
         if (smallhash[h2].key == 0) {
-          smallhash[h2].key = key;
-          count += 1;
+          smallhash[h2].key = aggr_key;
+          small_hash_count += 1;
         }
 
         smallhash[h2].count += 1;
         smallhash[h2].sum += table[h].val * (uint64_t) outer_vals[o];
 
-        if (count == 512 || o == outer_end - 1) {
-          flush(smallhash ,aggr_table, log_aggr_buckets);
+        // fprintf(stderr, "%d 555 \n", info->thread);
+
+        if (small_hash_count == 512 || o == outer_end - 1) {
+          // fprintf(stderr, "%d %d  \n", info->thread, small_hash_count);
+          // fprintf(stderr, "%d %ld  \n", info->thread, o);
+          // fprintf(stderr, "%d 444 \n", info->thread);
+          size_t i, aggr_h;
+          uint32_t aggr_key;
+
+          for (i = 0; i < 512; i++) {
+            if (smallhash[i].key == 0) {
+              continue;
+            }
+            aggr_key = smallhash[i].key;
+
+            aggr_h = (uint32_t) (aggr_key * 0x9e3779b1);
+            aggr_h >>= 32 - log_aggr_buckets;
+            // fprintf(stderr, "== %d %d %d \n", aggr_key, log_aggr_buckets, aggr_h);
+            // fprintf(stderr, "aggr_h %d\n", aggr_h);
+            // fprintf(stderr, "%d 666 \n", info->thread);
+
+            int flag = 0;
+            while (flag == 0) {
+              // if already occupied
+              // fprintf(stderr, "%d 1 \n", info->thread);
+              // fprintf(stderr, "%d aggr_h %d %d\n", info->thread, aggr_h, aggr_buckets);
+              if (aggr_table[aggr_h].key == aggr_key) {
+                // fprintf(stderr, "%d 2 \n", info->thread);
+                flag = 1;
+              } else { // if not occupied, try to occupy
+                // fprintf(stderr, "%d 3 \n", info->thread);
+                if (__sync_bool_compare_and_swap(&(aggr_table[aggr_h].key), 0, aggr_key)) {
+                  // fprintf(stderr, "%d 4 \n", info->thread);
+                  flag = 1;
+                } else if (aggr_table[aggr_h].key == aggr_key) { // if failed to occupy, check if occpuied by the same group
+                  // fprintf(stderr, "%d 5 \n", info->thread);
+                  flag = 1;
+                }
+                // fprintf(stderr, "%d 6 \n", info->thread);
+              }
+              if (flag == 0) {
+                // fprintf(stderr, "here ?????? \n");
+                // fprintf(stderr, "%d 7 \n", info->thread);
+                aggr_h = (aggr_h + 1) & (aggr_buckets - 1);
+
+              }
+            }
+
+            // fprintf(stderr, "%d 777 \n", info->thread);
+
+            __sync_fetch_and_add(&aggr_table[aggr_h].sum, smallhash[i].sum);
+            __sync_fetch_and_add(&aggr_table[aggr_h].count, smallhash[i].count);
+
+            smallhash[i].key = 0;
+            smallhash[i].count = 0;
+            smallhash[i].sum = 0;
+          }
+
+          // fprintf(stderr, "%d 888 \n", info->thread);
           small_hash_count = 0;
         }
         
@@ -320,7 +411,7 @@ void* q4112_run_thread(void* arg) {
   }
 
   free(smallhash);
-
+  // fprintf(stderr, "%d 999 \n", info->thread);
   // barrier wait for next stage: summing up
   pthread_barrier_wait(&barrier3);
 
@@ -390,7 +481,7 @@ uint64_t q4112_run(
     int threads) {
   // check number of threads
   int t, max_threads = sysconf(_SC_NPROCESSORS_ONLN);
-  printf("%d %d\n", max_threads, threads); 
+  // printf("%d %d\n", max_threads, threads); 
   assert(max_threads > 0 && threads > 0 && threads <= max_threads);
 
   // allocate threads info
@@ -404,20 +495,20 @@ uint64_t q4112_run(
   size_t aggr_buckets_estimate = estimate(outer_aggr_keys, outer_tuples, threads);
 
   uint64_t estimate_ns = get_time_in_ns() - start_time_ns;
-  fprintf(stderr, "Estimation time: %12s ns\n", add_commas_separator(estimate_ns));
-  fprintf(stderr, "aggregation table size: %zu\n", aggr_buckets_estimate);
+  // fprintf(stderr, "Estimation time: %12s ns\n", add_commas_separator(estimate_ns));
+  // fprintf(stderr, "aggregation table size: %zu\n", aggr_buckets_estimate);
 
 
   size_t aggr_buckets = smallest_power_of_2_greater_equal_n(aggr_buckets_estimate);
   int8_t log_aggr_buckets = trailing_zero_count2(aggr_buckets);
-  fprintf(stderr, "smallest p2 table size: %zu\n", aggr_buckets);
-  fprintf(stderr, "log p2 table size: %d\n", log_aggr_buckets);
+  // fprintf(stderr, "smallest p2 table size: %zu\n", aggr_buckets);
+  // fprintf(stderr, "log p2 table size: %d\n", log_aggr_buckets);
 
   // allocate and initialize the global aggregation table
   bucket_aggr_t* aggr_table = (bucket_aggr_t*) calloc(aggr_buckets, sizeof(bucket_aggr_t));
   assert(aggr_table != NULL);
 
-  fprintf(stderr, "calculate hash table\n");
+  // fprintf(stderr, "calculate hash table\n");
   // set the number of hash table buckets to be 2^k
   // the hash table fill rate will be between 1/3 and 2/3
   int8_t log_buckets = 1;
@@ -427,20 +518,20 @@ uint64_t q4112_run(
     buckets += buckets;
   }
 
-  fprintf(stderr, "create hash table\n");
+  // fprintf(stderr, "create hash table\n");
   // allocate and initialize the hash table
   // there are no 0 keys (see header) so we use 0 for "no key"
   bucket_t* table = (bucket_t*) calloc(buckets, sizeof(bucket_t));
   assert(table != NULL);
 
 
-  fprintf(stderr, "create barriers\n");
+  // fprintf(stderr, "create barriers\n");
   // set up barrier for threads
   pthread_barrier_init(&barrier2, NULL, threads);
   pthread_barrier_init(&barrier3, NULL, threads);
 
 
-  fprintf(stderr, "run threads\n");
+  // fprintf(stderr, "run threads\n");
   // run threads for matching
   for (t = 0; t != threads; ++t) {
     info[t].thread = t;
@@ -461,11 +552,12 @@ uint64_t q4112_run(
     pthread_create(&info[t].id, NULL, q4112_run_thread, &info[t]);
   }
 
-  fprintf(stderr, "gather result\n");
+  // fprintf(stderr, "gather result\n");
   // gather result
   uint64_t sum_avgs = 0;
   uint32_t num_groups = 0;
   for (t = 0; t != threads; ++t) {
+    // printf("t = %d\n", t);
     pthread_join(info[t].id, NULL);
     sum_avgs += info[t].sum_avgs;
     num_groups += info[t].num_groups;
