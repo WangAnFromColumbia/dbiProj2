@@ -96,8 +96,8 @@ int main(int argc, char* argv[])
     
 
     for (t = 0; t < 5; ++t) {
-      for (repeat = 1; repeat <= 1; ++repeat) {// repeat 改成了1次
-        printf("s=%d t=%d  \n",s,t);
+      for (repeat = 1; repeat <= 5; ++repeat) {// repeat 改成了1次
+        printf("s=%d t=%d  repeat=%d\n",s,t,repeat);
 
 
         // allocate space for outer table
