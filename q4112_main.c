@@ -56,7 +56,7 @@ int main(int argc, char* argv[])
                            1000000000, 1000000000, 1000000000, 1000000000,
                            1000000000, 1000000000, 1000000000, 1000000000,
                            1000000000, 1000000000, 1000000000, 1000000000,
-                           1000000000};
+                           10000000};
 
   double outer_selectivity[] = {1.0, 1.0, 1.0, 1.0, 1.0, 
                                1.0, 1.0, 1.0, 1.0, 1.0, 
@@ -119,7 +119,7 @@ int main(int argc, char* argv[])
                                  outer_join_keys, outer_aggr_keys, outer_vals, outer_tuples[s],
                                  outer_selectivity[s], outer_val_max[s], groups[s], hh_groups[s], hh_probability[s]);
 
-    for (t = 4; t < 5; ++t) {
+    for (t = 2; t < 3; ++t) {
       for (repeat = 1; repeat <= 1; ++repeat) {// repeat 改成了1次
         printf("s=%d t=%d  repeat=%d\n",s,t,repeat);
 
