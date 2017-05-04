@@ -92,7 +92,7 @@ int main(int argc, char* argv[])
                 "threads", "repeat", "nanoseconds");
 
   int s,t,repeat;
-  for (s = 0; s < 21; ++s) {
+  for (s = 20; s < 21; ++s) {
     // allocate space for outer table
     uint32_t *outer_join_keys = (uint32_t *)malloc(outer_tuples[s] * 4);
     assert(outer_join_keys != NULL);
@@ -119,8 +119,8 @@ int main(int argc, char* argv[])
                                  outer_join_keys, outer_aggr_keys, outer_vals, outer_tuples[s],
                                  outer_selectivity[s], outer_val_max[s], groups[s], hh_groups[s], hh_probability[s]);
 
-    for (t = 0; t < 5; ++t) {
-      for (repeat = 1; repeat <= 5; ++repeat) {// repeat 改成了1次
+    for (t = 4; t < 5; ++t) {
+      for (repeat = 1; repeat <= 1; ++repeat) {// repeat 改成了1次
         printf("s=%d t=%d  repeat=%d\n",s,t,repeat);
 
 
