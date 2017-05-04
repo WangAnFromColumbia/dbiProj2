@@ -16,7 +16,7 @@ typedef struct {
   uint32_t key;
   uint64_t sum;
   uint32_t count;
-} bucket_aggr_t;
+} bucket_group_t;
 
 
 // thread info structure for creating threads and transferring useful
@@ -34,15 +34,15 @@ typedef struct {
   const uint32_t* outer_aggr_keys;
   uint64_t sum;
   uint32_t count;
-  uint64_t sum_avgs;
-  uint32_t num_groups;
+  uint64_t sum_avg;
+  uint32_t num_group;
   bucket_t* table;  // not const since table is mutable
   int8_t log_buckets;
   size_t buckets;
-  bucket_aggr_t* aggr_table;
-  size_t aggr_buckets;
-  int8_t log_aggr_buckets;
-} q4112_run_info_hj_t;
+  bucket_group_t* table_group;
+  size_t buckets_group;
+  int8_t log_buckets_group;
+} q4112_run_info_t;
 
 typedef struct {
   pthread_t id;
@@ -54,7 +54,7 @@ typedef struct {
   size_t partitions;
   uint32_t* bitmaps;
   size_t sum;
-} q4112_estimation_info_hj_t;
+} q4112_estimation_t;
 
 // the barrier to control the threads
 static pthread_barrier_t barrier;
@@ -87,7 +87,7 @@ uint8_t trailing_zero_count2(size_t size) {
 }
 
 void* estimate_thread(void* arg) {
-  q4112_estimation_info_hj_t* info = (q4112_estimation_info_hj_t*) arg;
+  q4112_estimation_t* info = (q4112_estimation_t*) arg;
   assert(pthread_equal(pthread_self(), info->id));
 
   // copy info from thread info
@@ -147,8 +147,8 @@ size_t estimate(const uint32_t* outer_aggr_keys, size_t outer_tuples, int thread
   uint32_t* bitmaps = calloc(partitions, 4);
 
   // allocate threads info
-  q4112_estimation_info_hj_t* info = (q4112_estimation_info_hj_t*)
-      malloc(threads * sizeof(q4112_estimation_info_hj_t));
+  q4112_estimation_t* info = (q4112_estimation_t*)
+      malloc(threads * sizeof(q4112_estimation_t));
   assert(info != NULL);
 
   for (t = 0; t < threads; t++) {
@@ -173,7 +173,7 @@ size_t estimate(const uint32_t* outer_aggr_keys, size_t outer_tuples, int thread
 
 // build hash table and probe to get result (each thread has it own boundaries)
 void* q4112_run_thread(void* arg) {
-  q4112_run_info_hj_t* info = (q4112_run_info_hj_t*) arg;
+  q4112_run_info_t* info = (q4112_run_info_t*) arg;
   assert(pthread_equal(pthread_self(), info->id));
 
   // copy info from thread info
@@ -183,8 +183,8 @@ void* q4112_run_thread(void* arg) {
   size_t outer_tuples = info->outer_tuples;
   int8_t log_buckets = info->log_buckets;
   size_t buckets = info->buckets;
-  int8_t log_aggr_buckets = info->log_aggr_buckets;
-  size_t aggr_buckets = info->aggr_buckets;
+  int8_t log_buckets_group = info->log_buckets_group;
+  size_t buckets_group = info->buckets_group;
 
   const uint32_t* inner_keys = info->inner_keys;
   const uint32_t* inner_vals = info->inner_vals;
@@ -192,7 +192,7 @@ void* q4112_run_thread(void* arg) {
   const uint32_t* outer_vals = info->outer_vals;
   const uint32_t* outer_aggr_keys = info->outer_aggr_keys;
   bucket_t* table = info->table;
-  bucket_aggr_t* aggr_table = info->aggr_table;
+  bucket_group_t* table_group = info->table_group;
 
   // set thread boundaries for inner table
   size_t inner_beg = (inner_tuples / threads) * (thread + 0);
@@ -238,7 +238,7 @@ void* q4112_run_thread(void* arg) {
   }
 
   int small_hash_count = 0;
-  bucket_aggr_t* smallhash = (bucket_aggr_t*) calloc(512, sizeof(bucket_aggr_t));
+  bucket_group_t* smallhash = (bucket_group_t*) calloc(512, sizeof(bucket_group_t));
 
   // probe outer table using hash table
   for (o = outer_beg; o != outer_end; ++o) {
@@ -283,28 +283,28 @@ void* q4112_run_thread(void* arg) {
             aggr_key = smallhash[i].key;
 
             aggr_h = (uint32_t) (aggr_key * 0x9e3779b1);
-            aggr_h >>= 32 - log_aggr_buckets;
+            aggr_h >>= 32 - log_buckets_group;
 
             int flag = 0;
             while (flag == 0) {
               // if already occupied
-              if (aggr_table[aggr_h].key == aggr_key) {
+              if (table_group[aggr_h].key == aggr_key) {
                 flag = 1;
               } else { // if not occupied, try to occupy
-                if (__sync_bool_compare_and_swap(&(aggr_table[aggr_h].key), 0, aggr_key)) {
+                if (__sync_bool_compare_and_swap(&(table_group[aggr_h].key), 0, aggr_key)) {
                   flag = 1;
-                } else if (aggr_table[aggr_h].key == aggr_key) { // if failed to occupy, check if occpuied by the same group
+                } else if (table_group[aggr_h].key == aggr_key) { // if failed to occupy, check if occpuied by the same group
                   flag = 1;
                 }
               }
               if (flag == 0) {
-                aggr_h = (aggr_h + 1) & (aggr_buckets - 1);
+                aggr_h = (aggr_h + 1) & (buckets_group - 1);
 
               }
             }
 
-            __sync_fetch_and_add(&aggr_table[aggr_h].sum, smallhash[i].sum);
-            __sync_fetch_and_add(&aggr_table[aggr_h].count, smallhash[i].count);
+            __sync_fetch_and_add(&table_group[aggr_h].sum, smallhash[i].sum);
+            __sync_fetch_and_add(&table_group[aggr_h].count, smallhash[i].count);
 
             smallhash[i].key = 0;
             smallhash[i].count = 0;
@@ -328,24 +328,24 @@ void* q4112_run_thread(void* arg) {
   pthread_barrier_wait(&barrier3);
 
   // set thread boundaries for global aggregate table
-  size_t aggr_beg = (aggr_buckets / threads) * (thread + 0);
-  size_t aggr_end = (aggr_buckets / threads) * (thread + 1);
+  size_t aggr_beg = (buckets_group / threads) * (thread + 0);
+  size_t aggr_end = (buckets_group / threads) * (thread + 1);
   if (thread + 1 == threads) {
-    aggr_end = aggr_buckets;
+    aggr_end = buckets_group;
   }
 
-  uint64_t sum_avgs = 0;
-  uint32_t num_groups = 0;
+  uint64_t sum_avg = 0;
+  uint32_t num_group = 0;
   for (i = aggr_beg; i != aggr_end; ++i) {
-    if (aggr_table[i].key != 0) {
-      sum_avgs += aggr_table[i].sum / aggr_table[i].count;
-      num_groups += 1;
+    if (table_group[i].key != 0) {
+      sum_avg += table_group[i].sum / table_group[i].count;
+      num_group += 1;
     }
   }
 
   // save results
-  info->sum_avgs = sum_avgs;
-  info->num_groups = num_groups;
+  info->sum_avg = sum_avg;
+  info->num_group = num_group;
   pthread_exit(NULL);
 }
 
@@ -373,24 +373,24 @@ uint64_t q4112_run(
   assert(max_threads > 0 && threads > 0 && threads <= max_threads);
 
   // allocate threads info
-  q4112_run_info_hj_t* info = (q4112_run_info_hj_t*)
-      malloc(threads * sizeof(q4112_run_info_hj_t));
+  q4112_run_info_t* info = (q4112_run_info_t*)
+      malloc(threads * sizeof(q4112_run_info_t));
   assert(info != NULL);
 
   // estimate the global aggregation table size
   pthread_barrier_init(&barrier, NULL, threads);
-  size_t aggr_buckets_estimate = estimate(outer_aggr_keys, outer_tuples, threads);
+  size_t buckets_group_estimate = estimate(outer_aggr_keys, outer_tuples, threads);
 
-  size_t aggr_buckets = 1;
-  while (aggr_buckets < aggr_buckets_estimate) {
-    aggr_buckets *= 2;
+  size_t buckets_group = 1;
+  while (buckets_group < buckets_group_estimate) {
+    buckets_group *= 2;
   }
 
-  int8_t log_aggr_buckets = trailing_zero_count2(aggr_buckets);
+  int8_t log_buckets_group = trailing_zero_count2(buckets_group);
 
   // allocate and initialize the global aggregation table
-  bucket_aggr_t* aggr_table = (bucket_aggr_t*) calloc(aggr_buckets, sizeof(bucket_aggr_t));
-  assert(aggr_table != NULL);
+  bucket_group_t* table_group = (bucket_group_t*) calloc(buckets_group, sizeof(bucket_group_t));
+  assert(table_group != NULL);
 
   // set the number of hash table buckets to be 2^k
   // the hash table fill rate will be between 1/3 and 2/3
@@ -425,19 +425,19 @@ uint64_t q4112_run(
     info[t].table = table;
     info[t].log_buckets = log_buckets;
     info[t].buckets = buckets;
-    info[t].aggr_table = aggr_table;
-    info[t].log_aggr_buckets = log_aggr_buckets;
-    info[t].aggr_buckets = aggr_buckets;
+    info[t].table_group = table_group;
+    info[t].log_buckets_group = log_buckets_group;
+    info[t].buckets_group = buckets_group;
     pthread_create(&info[t].id, NULL, q4112_run_thread, &info[t]);
   }
 
   // gather result
-  uint64_t sum_avgs = 0;
-  uint32_t num_groups = 0;
+  uint64_t sum_avg = 0;
+  uint32_t num_group = 0;
   for (t = 0; t != threads; ++t) {
     pthread_join(info[t].id, NULL);
-    sum_avgs += info[t].sum_avgs;
-    num_groups += info[t].num_groups;
+    sum_avg += info[t].sum_avg;
+    num_group += info[t].num_group;
   }
 
   // clean up
@@ -446,7 +446,7 @@ uint64_t q4112_run(
   pthread_barrier_destroy(&barrier3);
   free(info);
   free(table);
-  free(aggr_table);
+  free(table_group);
 
-  return sum_avgs / num_groups;
+  return sum_avg / num_group;
 }
