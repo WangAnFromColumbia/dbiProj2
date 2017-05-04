@@ -134,10 +134,10 @@ int main(int argc, char* argv[])
         uint64_t run_res = q4112_run(inner_keys, inner_vals, inner_tuples[s],
                                      outer_join_keys, outer_aggr_keys, outer_vals, outer_tuples[s], threads[t]);
         gen_ns = real_time() - gen_ns;
-        printf("gen_ns %d\n", gen_ns);
+        printf("gen_ns %ld\n", gen_ns);
 
-        // printf("gen_res : %llu\n", (unsigned long long) gen_res);
-        // printf("run_res : %llu\n", (unsigned long long) run_res);
+        printf("gen_res : %llu\n", (unsigned long long) gen_res);
+        printf("run_res : %llu\n", (unsigned long long) run_res);
         assert(gen_res == run_res);
 
         fprintf(fd, "%ld,%f,%d,%ld,%f,%d,%ld,%ld,%f,%d,%d,%ld\n",inner_tuples[s], inner_selectivity[s], inner_val_max[s],
@@ -146,7 +146,7 @@ int main(int argc, char* argv[])
                 threads[t], repeat, gen_ns);
 
         free(inner_keys);
-        free(inner_vals);
+        free(inner_vals); 
         free(outer_join_keys);
         free(outer_aggr_keys);
         free(outer_vals);
